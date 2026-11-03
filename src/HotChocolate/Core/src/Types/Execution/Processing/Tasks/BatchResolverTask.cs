@@ -109,15 +109,29 @@ internal sealed class BatchResolverTask : IResolverTask
     /// <summary>
     /// Adds a parent context entry to this batch.
     /// Called during value completion when a batch field is encountered.
+    /// The entry is resolved and completed within the specified operation context.
     /// </summary>
     internal bool AddEntry(
+        OperationContext operationContext,
         object? parent,
         Selection selection,
         ResultElement resultValue,
         IImmutableDictionary<string, object?> scopedContextData,
         int branchId)
     {
-        _entries.Add(new BatchEntry(parent, selection, resultValue, scopedContextData, branchId));
+        if (!ReferenceEquals(operationContext, _operationContext))
+        {
+            operationContext.TaskCreated();
+        }
+
+        _entries.Add(
+            new BatchEntry(
+                operationContext,
+                parent,
+                selection,
+                resultValue,
+                scopedContextData,
+                branchId));
         return _branchIds.Add(branchId);
     }
 
@@ -343,6 +357,7 @@ internal sealed class BatchResolverTask : IResolverTask
     {
         for (var i = 0; i < contexts.Length; i++)
         {
+            var operationContext = _entries[i].OperationContext;
             var context = Unsafe.As<MiddlewareContext>(contexts[i]);
             var resultValue = context.ResultValue;
             var result = context.Result;
@@ -354,7 +369,7 @@ internal sealed class BatchResolverTask : IResolverTask
                 {
                     var completionContext =
                         new ValueCompletionContext(
-                            _operationContext,
+                            operationContext,
                             context,
                             _taskBuffer,
                             context.BranchId);
@@ -381,7 +396,7 @@ internal sealed class BatchResolverTask : IResolverTask
 
             if (resultValue is { IsNullable: false, IsNullOrInvalidated: true })
             {
-                if (_operationContext.PropagateNullValues)
+                if (operationContext.PropagateNullValues)
                 {
                     PropagateNullValues(resultValue);
                 }
@@ -391,7 +406,7 @@ internal sealed class BatchResolverTask : IResolverTask
                 }
 
                 _completionStatus = ExecutionTaskStatus.Faulted;
-                _operationContext.Result.AddNonNullViolation(context.Path);
+                operationContext.Result.AddNonNullViolation(context.Path);
                 _taskBuffer.Clear();
             }
         }
@@ -405,7 +420,7 @@ internal sealed class BatchResolverTask : IResolverTask
         {
             var entry = _entries[i];
             var resolverTask =
-                _operationContext.CreateResolverTask(
+                entry.OperationContext.CreateResolverTask(
                     entry.Parent,
                     entry.Selection,
                     entry.ResultValue,
@@ -456,6 +471,7 @@ internal sealed class BatchResolverTask : IResolverTask
     /// </summary>
     internal bool Reset()
     {
+        ReleaseOperationContext();
         _completionStatus = ExecutionTaskStatus.Completed;
         _resolverTasks.Clear();
         _entries.Clear();
@@ -468,7 +484,6 @@ internal sealed class BatchResolverTask : IResolverTask
 
         _rentedArgs.Clear();
         _branchIds.Clear();
-        ReleaseOperationContext();
         _operationContext = null!;
         _field = null!;
         _selectionPath = null!;
@@ -500,6 +515,15 @@ internal sealed class BatchResolverTask : IResolverTask
         }
 
         _isContextReleased = true;
+
+        foreach (var entry in _entries)
+        {
+            if (!ReferenceEquals(entry.OperationContext, _operationContext))
+            {
+                entry.OperationContext.TaskReturned();
+            }
+        }
+
         _operationContext.TaskReturned();
     }
 
@@ -507,6 +531,7 @@ internal sealed class BatchResolverTask : IResolverTask
     /// Represents a single entry in the batch — one parent object and its result location.
     /// </summary>
     private readonly record struct BatchEntry(
+        OperationContext OperationContext,
         object? Parent,
         Selection Selection,
         ResultElement ResultValue,

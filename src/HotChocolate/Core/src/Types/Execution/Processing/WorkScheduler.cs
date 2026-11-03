@@ -112,8 +112,9 @@ internal sealed partial class WorkScheduler
                     if (CompleteWorkUnsafe(work))
                     {
                         _completed.Add(resolverTask.Id);
-                        DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
                     }
+
+                    DecrementPathCountUnsafe(resolverTask.FieldSelectionPath);
                 }
                 break;
 
@@ -128,8 +129,9 @@ internal sealed partial class WorkScheduler
                     if (CompleteWorkUnsafe(work))
                     {
                         _completed.Add(task.Id);
-                        DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
                     }
+
+                    DecrementPathCountUnsafe(batchResolverTask.FieldSelectionPath);
                 }
                 break;
 
